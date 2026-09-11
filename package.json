@@ -1,0 +1,1 @@
+{"name":"inteligent-shop","version":"1.0.0","private":true,"type":"module","scripts":{"build":"tsc","check":"tsc --noEmit","serve":"node scripts/serve.mjs"},"devDependencies":{"typescript":"^5.9.2"}}
