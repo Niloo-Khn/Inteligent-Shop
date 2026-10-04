@@ -73,6 +73,32 @@ async function orderModal(id) { const order = (await getOrders()).find(item => i
     await api.request(`/shops/${selected}/orders/${id}/refunds`, "POST", { amount: Number(data.get("refundAmount")), reason: data.get("reason") }); }); }
 function promotionModal() { modal(`<h2>Create promotion</h2><div class="form-grid"><label>Name<input name="name" required></label><label>Code<input name="code" required></label><label>Product ID<input name="productId" placeholder="Optional"></label><label>Type<select name="kind"><option>percentage</option><option>fixed</option></select></label><label>Value<input name="value" type="number" min=".01" step=".01" required></label><label>Starts at<input name="startsAt" type="datetime-local" required></label><label>Ends at<input name="endsAt" type="datetime-local" required></label></div>`, async (data) => { const values = Object.fromEntries(data); await api.request(`/shops/${selected}/promotions`, "POST", { ...values, value: Number(values.value), active: true }); }); }
 function recommendationModal() { modal(`<h2>Homepage recommendations</h2><p class="muted">Enter product IDs in display order, separated by commas.</p><label>Product IDs<textarea name="ids" required></textarea></label>`, async (data) => { const productIds = String(data.get("ids")).split(",").map(value => value.trim()).filter(Boolean); await api.request(`/shops/${selected}/recommendations`, "PUT", { productIds }); }); }
+async function addCatalogDraft(product, useAi) { let copy = { name: product.name, description: product.description }; if (useAi)
+    copy = await api.request(`/shops/${selected}/catalog/enrich`, "POST", { product }); await api.request(`/shops/${selected}/products`, "POST", { sku: `AE-${product.source.externalId}`, name: copy.name, description: copy.description, imageUrl: product.imageUrl, price: product.supplierPrice, compareAtPrice: product.originalPrice, currency: product.currency, quantity: 0, shippingSummary: product.shippingSummary, status: "draft", source: product.source }); }
+function catalogModal() { const root = document.querySelector("#modal"); root.classList.remove("hidden"); root.innerHTML = `<section class="panel"><div class="toolbar"><div><p class="eyebrow">Approved API connection</p><h2>Search AliExpress</h2></div><button class="button secondary" id="catalog-close">Close</button></div><form id="catalog-search" class="form"><div class="form-grid"><label>Keywords<input name="keywords" placeholder="dog travel bowl" required></label><label>Ship to country<input name="shipToCountry" value="US" maxlength="2" required></label><label>Currency<input name="currency" value="USD" maxlength="3" required></label><label>Maximum delivery days<select name="deliveryDays"><option value="">Any</option><option>3</option><option>5</option><option>7</option><option>10</option></select></label></div><button class="button">Search products</button><p class="status"></p></form><div id="catalog-results" class="list"></div></section>`; document.querySelector("#catalog-close").onclick = () => root.classList.add("hidden"); const form = document.querySelector("#catalog-search"); form.onsubmit = async (event) => { event.preventDefault(); const data = Object.fromEntries(new FormData(form)); const status = form.querySelector(".status"); const results = document.querySelector("#catalog-results"); status.textContent = "Searching AliExpress…"; try {
+    const products = await api.request(`/shops/${selected}/catalog/aliexpress/search`, "POST", { ...data, page: 1, pageSize: 12 });
+    status.textContent = `${products.length} products found. Review supplier data before publishing.`;
+    results.innerHTML = products.map((product, index) => `<article class="row"><div style="display:flex;gap:12px;align-items:center"><img src="${escape(product.imageUrl)}" alt=""><div><strong>${escape(product.name)}</strong><div class="muted">AliExpress #${escape(product.source.externalId)} · Rating ${escape(product.rating || "—")}</div></div></div><span>${money(product.supplierPrice, product.currency)}</span><span>${product.salesVolume} recent sales</span><div><button class="button secondary" data-catalog-add="${index}">Add draft</button> <button class="button" data-catalog-ai="${index}">AI improve + add</button></div></article>`).join("");
+    results.onclick = async (click) => { const target = click.target.closest("button[data-catalog-add],button[data-catalog-ai]"); if (!target)
+        return; target.disabled = true; try {
+        const index = Number(target.dataset.catalogAdd ?? target.dataset.catalogAi);
+        const product = products[index];
+        if (!product)
+            return;
+        await addCatalogDraft(product, target.dataset.catalogAi !== undefined);
+        target.textContent = "Added as draft";
+    }
+    catch (error) {
+        target.disabled = false;
+        status.textContent = error instanceof Error && error.message === "503" ? "Connector not configured. Add AliExpress and OpenAI credentials to the backend .env file." : "The product could not be added. Check backend logs and credentials.";
+    } };
+}
+catch (error) {
+    status.textContent = error instanceof Error && error.message === "503" ? "AliExpress is not configured yet. Add the App Key and App Secret to the backend .env file." : "AliExpress search is temporarily unavailable.";
+} }; }
+const productToolbarObserver = new MutationObserver(() => { const manual = document.querySelector("#new-product"); if (!manual || document.querySelector("#import-aliexpress"))
+    return; manual.textContent = "+ Add manually"; const button = document.createElement("button"); button.id = "import-aliexpress"; button.className = "button"; button.textContent = "Search AliExpress"; button.onclick = catalogModal; manual.before(button); });
+productToolbarObserver.observe(app, { childList: true, subtree: true });
 async function boot() { try {
     shops = await api.request("/shops");
     await render();
